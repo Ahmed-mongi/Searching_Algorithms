@@ -1,0 +1,568 @@
+import time
+import pygame
+import random
+from collections import deque
+import heapq
+import math  # Imported for Simulated Annealing
+
+# Pygame setup
+pygame.init()
+WIDTH, HEIGHT = 1200, 800
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Path-Finding Agent in Binary Tree")
+
+# Colors
+WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+RED = (255, 0, 0)
+
+# Tree Node class
+class Node:
+    def __init__(self, position, has_apple=False, level=0):
+        self.position = position  # The position of the node (for display or reference)
+        self.has_apple = has_apple  # True if this node is the goal (apple)
+        self.children = []  # List of child nodes (possible next moves)
+        self.level = level  # Level or depth of this node in the search tree
+
+    def __lt__(self, other):
+        # Define how nodes are compared: based on their cost (if using heapq)
+        return False  # Don't compare nodes directly, rely on heapq sorting by cost
+
+    def __hash__(self):
+        return hash(self.position)
+
+    def __eq__(self, other):
+        return self.position == other.position
+
+    def manhattan_distance(self, goal_position):
+        """
+        Calculate the Manhattan distance to the goal position.
+        Assumes position is a tuple (x, y).
+        """
+        return abs(self.position[0] - goal_position[0]) + abs(self.position[1] - goal_position[1])
+
+# Generate the binary tree with levels
+def generate_tree(max_depth=5):
+    """
+    Generates a binary tree with the specified maximum depth (default: 5).
+    Ensures the tree fits within an 1200x800 window.
+    """
+    root = Node((WIDTH // 2, 30), level=1)  # Root at the top center
+    nodes = [root]
+    vertical_spacing = HEIGHT // (max_depth + 1)  # Divide vertical space evenly
+
+    for level in range(1, max_depth + 1):
+        next_nodes = []
+        for node in nodes:
+            x, y = node.position
+            # Adjust horizontal spacing dynamically based on level
+            offset = WIDTH // (2 ** (level + 1))  # Decrease offset for deeper levels
+
+            # Create left and right child nodes
+            left = Node((x - offset, y + vertical_spacing), level=level + 1)
+            right = Node((x + offset, y + vertical_spacing), level=level + 1)
+
+            node.children = [left, right]
+            next_nodes.extend([left, right])
+        nodes = next_nodes
+
+    # Randomly place the apple at one of the leaf nodes
+    leaf_nodes = nodes  # Last set of nodes are the leaf nodes
+    apple_node = random.choice(leaf_nodes)
+    apple_node.has_apple = True
+    return root, apple_node
+
+# Initialize tree and apple
+root, apple_node = generate_tree()
+
+# Load and resize the apple image
+try:
+    apple_image = pygame.image.load('apple.jpeg').convert_alpha()  # Use convert_alpha for transparency
+    apple_image = pygame.transform.scale(apple_image, (apple_image.get_width() // 4, apple_image.get_height() // 4))
+    apple_image.set_colorkey((255, 255, 255)) 
+except pygame.error:
+    print("Failed to load 'apple.jpeg'. Please ensure the image is in the correct directory.")
+    apple_image = None  # Handle missing image gracefully
+
+def draw_tree(node, parent=None):
+    # Draw the node
+    if node.has_apple and apple_image:
+        # Draw the apple image instead of a circle
+        image_rect = apple_image.get_rect(center=node.position)  # Center the image at the node's position
+        screen.blit(apple_image, image_rect)  # Draw the apple image
+    else:
+        pygame.draw.circle(screen, BLUE, node.position, 15)  # Regular node
+
+    # Draw the line to the parent
+    if parent:
+        pygame.draw.line(screen, WHITE, parent.position, node.position, 2)
+
+    # Recursively draw children
+    for child in node.children:
+        draw_tree(child, node)
+
+# Setup font
+font = pygame.font.SysFont('Arial', 24)  # Font name and size
+
+# Function to render and display text
+def draw_text(text, position, color=(255, 255, 255)):
+    text_surface = font.render(text, True, color)
+    screen.blit(text_surface, position)
+
+def bfs(root):
+    queue = deque([(root, [])])  # Queue to store nodes to explore
+    visited = set()  # Set to keep track of visited nodes
+    actions_taken = 0  # Counter for actions (steps taken)
+
+    while queue:
+        node, path = queue.popleft()
+        actions_taken += 1  # Increment for each action taken
+        draw_node(node, color=(0, 255, 0))  # Highlight in green
+        pygame.display.flip()
+        pygame.time.wait(50)
+        if node in visited:
+            continue
+        visited.add(node)
+        path = path + [node]
+
+        if node.has_apple:
+            draw_node(node, color=(0, 255, 0))  # Green for goal node
+            pygame.display.flip()
+            print("Algorithm used: Breadth-First Search (BFS)")
+            return path, actions_taken  # Return path and actions taken
+
+        # Add children to the queue
+        for child in node.children:
+            queue.append((child, path))
+
+    return [], actions_taken  # If the apple is not found
+
+def dfs(node, path=[], visited=None, actions_taken=0):
+    if visited is None:
+        visited = set()
+    if path is None:
+        path = []    
+
+    if node in visited:
+        return [], actions_taken
+    visited.add(node)
+    path = path + [node]
+    actions_taken += 1  # Increment for each action taken
+
+    draw_node(node, color=(0, 255, 0))  # Green for the current node
+    pygame.display.flip()
+    pygame.time.wait(50)
+    if node.has_apple:
+        draw_node(node, color=(0, 255, 0))  # Green for the goal node
+        pygame.display.flip()
+        print("Algorithm used: Depth-First Search (DFS)")
+        return path, actions_taken
+
+    # Explore children
+    for child in node.children:
+        result, actions_taken = dfs(child, path, visited, actions_taken)
+        if result:
+            return result, actions_taken
+
+    return [], actions_taken  # If no path is found
+
+def ucs(root):
+    # Priority queue stores tuples: (cost, node, path)
+    queue = [(0, root, [])]  # Start with the root node at cost 0
+    visited = {}  # Store the best cost for each node
+    actions_taken = 0  # Count actions (steps taken)
+
+    while queue:
+        cost, node, path = heapq.heappop(queue)  # Pop node with the lowest cost
+        actions_taken += 1  # Count this as an action (step)
+
+        draw_node(node, color=(0, 255, 0))  # Highlight in green
+        pygame.display.flip()
+        pygame.time.wait(50)
+        # If the node has been visited with a cheaper or equal cost, skip it
+        if node in visited and visited[node] <= cost:
+            continue
+        visited[node] = cost  # Record the node's cost
+        path = path + [node]  # Add the current node to the path
+
+        if node.has_apple:
+            draw_node(node, color=(0, 255, 0))  # Highlight goal in green
+            pygame.display.flip()  # Update display
+            print("Algorithm used: Uniform Cost Search (UCS)")
+            return path, actions_taken  # Return path and actions taken
+
+        # Add child nodes to the priority queue with updated costs
+        for child in node.children:
+            heapq.heappush(queue, (cost + 1, child, path))  # Increment cost by 1 for each move
+
+    return [], actions_taken  # If no path found
+
+def ids(root, max_depth=10):
+    actions_taken = 0
+    for depth in range(max_depth + 1):  # Increase depth incrementally
+        path, dls_actions = dls(root, depth)
+        actions_taken += dls_actions
+        if path:  # If a valid path is found, return it
+            print("Algorithm used: Iterative Deepening Search (IDS)")
+            return path, actions_taken
+
+    return [], actions_taken  # If no path found
+
+def dls(node, depth, path=None, visited=None, actions_taken=0):
+    if path is None:
+        path = []
+    if visited is None:
+        visited = set()
+
+    actions_taken += 1
+
+    # Visualize the current node
+    draw_node(node, color=(0, 255, 0))  # Green for current node
+    pygame.display.flip()
+    pygame.time.wait(50)
+
+    if node.has_apple:  # Goal check
+        draw_node(node, color=(0, 255, 0))  # Green for goal node
+        pygame.display.flip()
+        return path + [node], actions_taken
+
+    if depth <= 0:
+        return [], actions_taken  # Stop if the depth limit is reached
+
+    visited.add(node)
+
+    # Visit each child recursively with reduced depth
+    for child in node.children:
+        if child not in visited:
+            result_path, result_actions = dls(child, depth - 1, path + [node], visited, actions_taken)
+            if result_path:  # If a valid path is found, return it
+                return result_path, result_actions
+
+    return [], actions_taken  # If no path found
+
+
+def a_star(root, apple_node):
+    open_set = []  # Priority queue for nodes to explore
+    heapq.heappush(open_set, (heuristic(root, apple_node), root))  # Push the initial node with its heuristic
+    came_from = {}  # To reconstruct the path
+    g_score = {root: 0}  # Cost from start to node
+    f_score = {root: heuristic(root, apple_node)}  # Estimated total cost from start to goal
+
+    actions_taken = 0  # Count actions (steps taken)
+
+    while open_set:
+        actions_taken += 1  # Increment for each action taken
+        current_f, current_node = heapq.heappop(open_set)  # Get the node with the lowest f_score
+
+        draw_node(current_node, color=(0, 255, 0))  # Highlight current node
+        pygame.display.flip()
+        pygame.time.wait(50)
+
+        if current_node.has_apple:
+            # Reconstruct path
+            path = [current_node]
+            while current_node in came_from:
+                current_node = came_from[current_node]
+                path.append(current_node)
+            path.reverse()
+            draw_node(current_node, color=(0, 255, 0))  # Highlight goal in green
+            pygame.display.flip()
+            print("Algorithm used: A* Search")
+            return path, actions_taken  # Return path and actions taken
+
+        for child in current_node.children:
+            tentative_g_score = g_score[current_node] + 1  # Assuming uniform cost for moving to a child
+
+            if child not in g_score or tentative_g_score < g_score[child]:
+                came_from[child] = current_node
+                g_score[child] = tentative_g_score
+                f_score[child] = tentative_g_score + heuristic(child, apple_node)
+
+                if child not in [i[1] for i in open_set]:  # If child is not in the open set
+                    heapq.heappush(open_set, (f_score[child], child))  # Push with updated f_score
+
+    return [], actions_taken  # Return None if no path is found
+
+def draw_node(node, color=(0, 255, 0)):
+    # Draw the node on the screen (adjust size/position as needed)
+    pygame.draw.circle(screen, color, node.position, 10)
+
+def hill_climbing(root, apple_node):
+    """
+    Implements the Hill Climbing algorithm to find the apple node in the binary tree.
+
+    Args:
+        root (Node): The starting node of the search (root of the tree).
+        apple_node (Node): The goal node containing the apple.
+
+    Returns:
+        tuple: A tuple containing the path taken as a list of nodes and the number of actions taken.
+    """
+    current = root  # Start at the root node
+    path = [current]  # Initialize the path with the root node
+    actions_taken = 0  # Initialize the action counter
+
+    while not current.has_apple:
+        actions_taken += 1  # Increment the action counter
+
+        # Highlight the current node in yellow to indicate it's being processed
+        draw_node(current, color=(255, 255, 0))  # Yellow color
+        pygame.display.flip()  # Update the display to show the highlighted node
+        pygame.time.wait(100)  # Pause for 100 milliseconds for visualization
+
+        # Check if the current node has any children
+        if not current.children:
+            print("Hill Climbing encountered a dead end.")
+            break  # No further nodes to explore; dead end reached
+
+        # Select the child with the minimum heuristic value (closest to the apple)
+        best_child = min(current.children, key=lambda node: heuristic(node, apple_node))
+
+        # Calculate heuristic values for the current node and the best child
+        current_heuristic = heuristic(current, apple_node)
+        best_child_heuristic = heuristic(best_child, apple_node)
+
+        # Decision: Move to the best child if it offers an improvement
+        if best_child_heuristic < current_heuristic:
+            current = best_child  # Move to the better child
+            path.append(current)  # Append the new node to the path
+        else:
+            # No improvement; the algorithm has reached a local maximum
+            print("Hill Climbing has reached a local maximum and cannot find the apple.")
+            break
+
+    # Check if the goal was reached
+    if current.has_apple:
+        print("Algorithm used: Hill Climbing")
+    else:
+        print("Hill Climbing did not find the apple.")
+
+    return path, actions_taken  # Return the path and actions taken
+
+def simulated_annealing(root, apple_node, initial_temp=100, cooling_rate=0.95, min_temp=1):
+    current = root
+    path = [current]
+    actions_taken = 0
+    temperature = initial_temp
+
+    while not current.has_apple and temperature > min_temp:
+        actions_taken += 1
+        draw_node(current, color=(255, 165, 0))  # Highlight in orange
+        pygame.display.flip()
+        pygame.time.wait(100)
+
+        if not current.children:
+            break  # Dead end
+
+        # Select a random child
+        next_node = random.choice(current.children)
+        current_distance = heuristic(current, apple_node)
+        next_distance = heuristic(next_node, apple_node)
+        delta = next_distance - current_distance
+
+        # Decide whether to move to the next node
+        if delta < 0 or random.uniform(0, 1) < math.exp(-delta / temperature):
+            current = next_node
+            path.append(current)
+
+        # Cool down the temperature
+        temperature *= cooling_rate
+
+    if current.has_apple:
+        print("Algorithm used: Simulated Annealing")
+    else:
+        print("Simulated Annealing did not find the apple.")
+
+    return path, actions_taken
+
+def genetic_algorithm(root, apple_node, population_size=20, generations=50, mutation_rate=0.1):
+    # Generate initial population with random paths
+    population = [random_path(root, max_depth=5) for _ in range(population_size)]
+    actions_taken = 0
+
+    for generation in range(generations):
+        # Calculate fitness (inverse of distance)
+        fitness_scores = [1 / (heuristic(get_end_node(path), apple_node) + 1) for path in population]
+
+        # Check if any individual has reached the goal
+        for idx, path in enumerate(population):
+            actions_taken += len(path)
+            for node in path:
+                draw_node(node, color=(138, 43, 226))  # Highlight in purple
+                pygame.display.flip()
+                pygame.time.wait(50)
+                if node.has_apple:
+                    print("Algorithm used: Genetic Algorithm")
+                    return path, actions_taken
+
+        # Selection: Select the top 50% individuals
+        selected = [population[i] for i in select_top_fifty_percent(fitness_scores)]
+
+        # Crossover: Create new population by crossing over selected individuals
+        offspring = []
+        while len(offspring) < population_size - len(selected):
+            parent1, parent2 = random.sample(selected, 2)
+            child = crossover(parent1, parent2)
+            offspring.append(child)
+
+        # Mutation: Randomly mutate some offspring
+        for child in offspring:
+            if random.uniform(0, 1) < mutation_rate:
+                mutate(child, root, apple_node)
+
+        # Create the new population
+        population = selected + offspring
+
+    # If no solution found
+    print("Genetic Algorithm did not find the apple.")
+    return [], actions_taken
+
+def random_path(root, max_depth=5):
+    path = [root]
+    current = root
+    for _ in range(max_depth):
+        if not current.children:
+            break
+        current = random.choice(current.children)
+        path.append(current)
+    return path
+
+def get_end_node(path):
+    return path[-1] if path else None
+
+def select_top_fifty_percent(fitness_scores):
+    # Select indices of top 50% fitness scores
+    sorted_indices = sorted(range(len(fitness_scores)), key=lambda i: fitness_scores[i], reverse=True)
+    return sorted_indices[:len(fitness_scores)//2]
+
+def crossover(parent1, parent2):
+    # Find common depth
+    min_length = min(len(parent1), len(parent2))
+    crossover_point = random.randint(1, min_length - 1) if min_length > 1 else 1
+    child = parent1[:crossover_point] + parent2[crossover_point:]
+    return child
+
+def mutate(path, root, apple_node):
+    # Randomly change one node in the path
+    if len(path) <=1:
+        return
+    mutation_point = random.randint(1, len(path)-1)
+    current = path[mutation_point-1]
+    if current.children:
+        new_node = random.choice(current.children)
+        path[mutation_point] = new_node
+        # Truncate the path if necessary
+        del path[mutation_point+1:]
+
+def heuristic(node, goal_node):
+    """
+    Calculate the Manhattan distance heuristic for a node relative to the goal node.
+    """
+    return node.manhattan_distance(goal_node.position)
+
+
+# Define a variable to keep track of the selected algorithm
+selected_algorithm = "None"
+
+def select_algorithm(event):
+    global selected_algorithm
+    # Check which key was pressed and set the corresponding algorithm
+    if event.key == pygame.K_1:
+        selected_algorithm = 'bfs'
+        print("Selected Breadth-First Search (BFS)")
+    elif event.key == pygame.K_2:
+        selected_algorithm = 'dfs'
+        print("Selected Depth-First Search (DFS)")
+    elif event.key == pygame.K_3:
+        selected_algorithm = 'ucs'
+        print("Selected Uniform Cost Search (UCS)")
+    elif event.key == pygame.K_4:
+        selected_algorithm = 'ids'
+        print("Selected Iterative Deepening Search (IDS)")
+    elif event.key == pygame.K_5:
+        selected_algorithm = 'hill_climbing'
+        print("Selected Hill Climbing")
+    elif event.key == pygame.K_6:
+        selected_algorithm = 'simulated_annealing'
+        print("Selected Simulated Annealing")
+    elif event.key == pygame.K_7:
+        selected_algorithm = 'a_star'
+        print("Selected A* Search")
+    elif event.key == pygame.K_8:
+        selected_algorithm = 'genetic_algorithm'
+        print("Selected Genetic Algorithm")
+    else:
+        print("Invalid key. Please press 1, 2, 3, 4, 5, 6, 7, or 8 to select an algorithm.")
+
+running = True
+path = []  # Initialize path to store the agent's path
+actions_taken = 0  # Initialize actions taken
+
+running = True
+path = []  # Initialize path to store the agent's path
+actions_taken = 0  # Initialize actions taken
+elapsed_time = 0  # Initialize elapsed time
+
+while running:
+    screen.fill((0, 0, 0))  # Fill screen with black background
+    draw_tree(root)  # Draw the tree structure
+
+    # Check events
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        if event.type == pygame.KEYDOWN:
+            select_algorithm(event)  # Call the function to select an algorithm
+
+            # Reset the path, actions, and elapsed time before each search to avoid issues
+            path = []  
+            actions_taken = 0  # Reset actions count
+            elapsed_time = 0  # Reset elapsed time
+
+            # Capture the start time
+            start_time = time.time()
+
+            # Execute the selected algorithm
+            if selected_algorithm == 'bfs':
+                path, actions_taken = bfs(root)
+            elif selected_algorithm == 'dfs':
+                path, actions_taken = dfs(root)
+            elif selected_algorithm == 'ucs':
+                path, actions_taken = ucs(root)
+            elif selected_algorithm == 'ids':
+                path, actions_taken = ids(root)
+            elif selected_algorithm == 'hill_climbing':
+                path, actions_taken = hill_climbing(root, apple_node)
+            elif selected_algorithm == 'simulated_annealing':
+                path, actions_taken = simulated_annealing(root, apple_node)
+            elif selected_algorithm == 'a_star':
+                path, actions_taken = a_star(root, apple_node)
+            elif selected_algorithm == 'genetic_algorithm':
+                path, actions_taken = genetic_algorithm(root, apple_node)
+
+            # Capture the end time and compute elapsed time
+            elapsed_time = time.time() - start_time
+
+    # Draw the path taken by the agent
+    if path:
+        for node in path:
+            pygame.draw.circle(screen, GREEN, node.position, 15)  # Highlight path in green
+
+    # Draw the algorithm and actions on the screen
+    if selected_algorithm is None:
+        algorithm_text = "Algorithm: Not Selected"
+    else:
+        algorithm_text = f"Algorithm: {selected_algorithm.replace('_', ' ').upper()}"
+
+    actions_text = f"Actions: {actions_taken}"
+    time_text = f"Time: {elapsed_time:.4f} s"  # Format to 4 decimal places
+
+    # Render the text on the screen
+    draw_text(algorithm_text, (10, 10), color=(255, 255, 255))
+    draw_text(actions_text, (10, 40), color=(255, 255, 255))
+    draw_text(time_text, (10, 70), color=(255, 255, 255))  # Added line for elapsed time
+
+    pygame.display.flip()  # Update the screen with the new content
+
+pygame.quit()
