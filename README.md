@@ -51,7 +51,13 @@ This project implements multiple path-finding algorithms to navigate a binary tr
 ## Installation and Usage
 ### Requirements
 - Python 3.x
-- Required libraries (install via `pip install -r requirements.txt` if applicable)
+- Required libraries (import time
+import pygame
+import random
+from collections import deque
+import heapq
+import math)
+
 
 ### Running the Project
 1. Clone this repository:
